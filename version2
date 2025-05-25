@@ -1,0 +1,426 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <termios.h>
+#include <time.h>
+
+#define TAILLE_BASE 10 //Taille de base du serpent
+#define STOP 'a' //Touche à entrer pour arrêter le serpent
+#define TEMPORISATION 200000 //Temps de pause entre chaque actions
+#define X_BASE_SERPENT 40 //abscisse d'apparition de la tête du serpent
+#define Y_BASE_SERPENT 20 //ordonnée d'apparition de la tête du serpent
+#define CORPS 'X' //caractère du corps du serpent
+#define TETE 'O' //caractère de la tête du serpent
+#define HAUT 'z' //touche à entrer pour aller en haut
+#define BAS 's' //touche à entrer pour aller en bas
+#define GAUCHE 'q'//touche à entrer pour aller à gauche
+#define DROITE 'd'//touche à entrer pour aller à droite
+#define LARGEUR_PLATEAU 80 //largeur du plateau de jeu
+#define HAUTEUR_PLATEAU 40 //hauteur du plateau de jeu
+#define MOITIE_LARGEUR 40 //moitie de la largeur du plateau de jeu
+#define MOITIE_HAUTEUR 20 //moitie de la hauteur du plateau de jeu
+#define X_BASE_PLATEAU 1 //abscisse d'apparition du plateau de jeu
+#define Y_BASE_PLATEAU 1 //ordonnée d'apparition du plateau de jeu
+#define MUR '#' //caractère correspondant aux obstacles
+#define FOND ' ' //caractère correspondant au fond du plateau de jeu
+#define ESPACEMENT 2 //espacement minimal entre les pavés et les bords
+#define POMME '6' //caractère correspondant à une pomme
+#define NB_MAX_POMMES 10 //nombre maximal de pommes que peut manger le serpent avant que le jeu s'arrête
+#define ID_TP_HAUT 1 //indice du chemin allant vers le téléporteur du haut
+#define ID_TP_BAS  2 //indice du chemin allant vers le téléporteur du bas
+#define ID_TP_DROITE 3 //indice du chemin allant vers le téléporteur de droite
+#define ID_TP_GAUCHE 4 //indice du chemin allant vers le téléporteur de gauche
+#define ID_CHEMIN_BASE 0 //indice du chemin allant vers la pomme
+
+typedef char plateau[LARGEUR_PLATEAU][HAUTEUR_PLATEAU];
+typedef int serpent[2][TAILLE_BASE];
+typedef int tp[2];//type de tableau correspondant aux coordonnées d'un téléporteur
+
+plateau map; //initialisation du tableau du plateau de jeu en tant que variable globale
+serpent coordonnées; //création du tableau à deux dimensions qui contiendra les coordonnées du serpent en tant que variable globale
+tp tpHaut={MOITIE_LARGEUR, Y_BASE_PLATEAU};//coordonnées du téléporteur du haut
+tp tpBas={MOITIE_LARGEUR, HAUTEUR_PLATEAU};//coordonnées du téléporteur du bas
+tp tpDroite={LARGEUR_PLATEAU, MOITIE_HAUTEUR};//coordonnées du téléporteur de droite
+tp tpGauche={X_BASE_PLATEAU, MOITIE_HAUTEUR};//coordonnées du téléporteur de gauche
+int lesPommesX[NB_MAX_POMMES] = {75, 75, 78, 2, 8, 78, 74, 2, 72, 5};
+int lesPommesY[NB_MAX_POMMES] = { 8, 39, 2, 2, 5, 39, 33, 38, 35, 2};
+int nbPommes=0;
+
+
+void gotoXY(int x, int y); // (x,y) sont les coordonnées où on veut placer le curseur
+
+void afficher(int x, int y, char c); //(x,y) des coordonnées et c un caractère
+
+void effacer(int x, int y); //(x,y) des coordonnées
+
+void dessinerSerpent(); //coordonnées un tableau à deux dimensions contenant des coordonnées
+
+void progresser( char direction, bool* collision, bool* pomme); //coordonnées un tableau à deux dimensions contenant des coordonnées, direcion la direction qu'il doit prendre
+                                                                    //collision un booléen renvoyant true si un obstacle est touché et false sinon et pomme un booléen renvoyant true si une pomme est mangée et false sinon
+void disableEcho(); //Désactive l'affichage des touches entrées
+
+void enableEcho(); //Active l'affichage des touches entrées
+
+void initPlateau(); //initialise le plateau de jeu
+
+void dessinerPlateau(); //affiche le plateau de jeu
+
+void ajouterPomme(); //ajoute une pommme sur le plateau de jeu
+
+char prochaineAction(int *chemin);//renvoie la direction que le serpent va prendre
+
+bool estDansSerpent( int x, int y, int depart); //renvoie true si les coordonnées x et y correspondent à une partie du serpent à partir de depart et false sinon
+
+int plusCourtChemin();//renvoie l'indice de la destination que le serpent prendra
+
+int kbhit();
+
+int main(){
+    int i, nbActions=0, chemin; //nbActions le nombre de déplacement total que le serpent a fait et chemin le chemin que le serpent suivra
+    char verif, input=DROITE; //input une variable contenant l'action du joueur
+    bool collision=false, pomme=false;//variable servant à savoir si un obstacle a été touché
+    clock_t begin = clock();
+    for (i=0;i<TAILLE_BASE;i++){ //boucle qui rentre les coordonnées de chaque partie du serpent
+        coordonnées[0][i]=X_BASE_SERPENT-i;//à partir des coordonnées rentrées par l'utilisateur
+        coordonnées[1][i]=Y_BASE_SERPENT;
+    }
+    initPlateau();
+    system("clear"); //Efface tout ce qui est écrit sur le terminal
+    dessinerPlateau();
+    dessinerSerpent();
+    printf("\e[?25l");//sert à enlever le carré blanc qui suit le serpent dans certains termin
+    chemin=plusCourtChemin();
+    disableEcho();
+    while (input!=STOP && !collision && nbPommes<NB_MAX_POMMES){ //affiche le serpent et le fait avancer tant que 'a' n'est pas entré et qu'aucune collison n'est detectée
+        usleep(TEMPORISATION);
+        input=prochaineAction(&chemin);
+        progresser(input,&collision,&pomme);
+        nbActions++;
+        if(pomme==true){ //si une pomme a été mangée 
+            pomme=false;
+            nbPommes++;//incrémente la variable servant à garder le compte des pommes mangées
+            map[coordonnées[0][0]-1][coordonnées[1][0]-1]=FOND;//efface la pomme précédemment mangée du tableau du plateau
+            if(nbPommes<NB_MAX_POMMES){
+                ajouterPomme();//génère une autre pomme si le jeu continue
+                chemin=plusCourtChemin();
+            }
+        }
+        if (kbhit()==1){ //vérifie si un caractère est entré au clavier
+            verif=getchar(); //récupère le caractère entré
+            if (verif==STOP){ //vérifie que le caractère entré est bien une touche de direction ou la caractère de fin de boucle
+                input=verif; 
+            }
+        }
+    }
+    
+    if (nbPommes==NB_MAX_POMMES){
+        printf("\n Bravo! Vous avez gagné! En %d déplacements  ",nbActions); //informe le joueur qu'il a gagné une fois qu'il a mangé suffisamment de pommes
+    }
+    clock_t end = clock();
+    double tmpsCPU = ((end - begin)*1.0) / CLOCKS_PER_SEC;
+    printf( "Temps CPU = %.3f secondes\n",tmpsCPU);
+    enableEcho();
+    return EXIT_SUCCESS;
+}
+
+
+void initPlateau(){
+    for (int i=X_BASE_PLATEAU; i<LARGEUR_PLATEAU+X_BASE_PLATEAU;i++){ //Boucles for imbriquées servant à parcourir le tableau où i correspond à l'abscisse
+        for(int j=Y_BASE_PLATEAU;j<HAUTEUR_PLATEAU+Y_BASE_PLATEAU;j++){// et j à l'ordonnée
+            if ((i==X_BASE_PLATEAU)||(j==Y_BASE_PLATEAU)||(i==LARGEUR_PLATEAU)||(j==HAUTEUR_PLATEAU)){ //vérifie si les coordonnées sont celles des bords
+                map[i-X_BASE_PLATEAU][j-Y_BASE_PLATEAU]=MUR;//attribue le caractère correspondant aux obstacles si c'est un bord
+
+                if((i==MOITIE_LARGEUR && (j==Y_BASE_PLATEAU || j==HAUTEUR_PLATEAU)) || ((i==X_BASE_PLATEAU || i==LARGEUR_PLATEAU) && j==MOITIE_HAUTEUR)){
+                    map[i-X_BASE_PLATEAU][j-Y_BASE_PLATEAU]=FOND; //créé les trous dans les limites du plateau
+                }
+            }
+            else{
+                map[i-X_BASE_PLATEAU][j-Y_BASE_PLATEAU]=FOND;//attribue le caractère correspondant au fond autrement
+            }
+        }
+    }
+    
+    ajouterPomme();// génère une pomme au moment de l'initialisation
+}
+
+void dessinerPlateau(){
+    for (int i=X_BASE_PLATEAU; i<LARGEUR_PLATEAU+X_BASE_PLATEAU;i++){//parcours le tableau du plateau de jeu
+        for(int j=Y_BASE_PLATEAU;j<HAUTEUR_PLATEAU+Y_BASE_PLATEAU;j++){//afin de l'afficher 
+            afficher(i,j,map[i-X_BASE_PLATEAU][j-Y_BASE_PLATEAU]);
+        }
+    }
+}
+int plusCourtChemin(){
+    int nbActions, nbActionsTp1, nbActionsTp2, nbActionsTp3, nbActionsTp4;//Ces variables sont liées aux nombres d'actions que demande chaque chemin
+    nbActions= abs(lesPommesX[nbPommes]-coordonnées[0][0])+abs(lesPommesY[nbPommes]-coordonnées[1][0]); //calcule la distance à parcourir pour aller à la pomme sans téléporteurs
+    nbActionsTp1= abs(tpHaut[0]-coordonnées[0][0])+abs(tpHaut[1]-coordonnées[1][0])+ abs(lesPommesX[nbPommes]-tpBas[0])+abs(lesPommesY[nbPommes]-tpBas[1]);//calcule la distance à parcourir pour aller à la pomme en passant par le téléporteur du haut
+    nbActionsTp2= abs(tpBas[0]-coordonnées[0][0])+abs(tpBas[1]-coordonnées[1][0])+ abs(lesPommesX[nbPommes]-tpHaut[0])+abs(lesPommesY[nbPommes]-tpHaut[1]);//calcule la distance à parcourir pour aller à la pomme en passant par le téléporteur du bas
+    nbActionsTp3= abs(tpDroite[0]-coordonnées[0][0])+abs(tpDroite[1]-coordonnées[1][0])+ abs(lesPommesX[nbPommes]-tpGauche[0])+abs(lesPommesY[nbPommes]-tpGauche[1]);//calcule la distance à parcourir pour aller à la pomme en passant par le téléporteur de droite
+    nbActionsTp4= abs(tpGauche[0]-coordonnées[0][0])+abs(tpGauche[1]-coordonnées[1][0])+ abs(lesPommesX[nbPommes]-tpDroite[0])+abs(lesPommesY[nbPommes]-tpDroite[1]);//calcule la distance à parcourir pour aller à la pomme en passant par le téléporteur de gauche
+    if(nbActions<=nbActionsTp1 && nbActions<=nbActionsTp2 && nbActions<=nbActionsTp3 && nbActions<=nbActionsTp4){//vérifie quel chemin est le plus court
+        return ID_CHEMIN_BASE;
+    }
+    else{
+        if(nbActionsTp1<=nbActions && nbActionsTp1<=nbActionsTp2 && nbActionsTp1<=nbActionsTp3 && nbActionsTp1<=nbActionsTp4){
+            return ID_TP_HAUT;
+        }
+        else if(nbActionsTp2<=nbActions && nbActionsTp2<=nbActionsTp1 && nbActionsTp2<=nbActionsTp3 && nbActionsTp2<=nbActionsTp4){
+            return ID_TP_BAS;
+        }
+        else if(nbActionsTp3<=nbActions && nbActionsTp3<=nbActionsTp1 && nbActionsTp3<=nbActionsTp2 && nbActionsTp1<=nbActionsTp4){
+            return ID_TP_DROITE;
+        }
+        else{
+            return ID_TP_GAUCHE;
+        }
+    }
+}
+
+char prochaineAction(int* chemin){//décide la prochaine action en fonction du chemin donné en entrée 
+    char input;//variable associée à la prochaine direction empruntée par le serpent
+    int x, y;//coordonnées de la destination que le serpent cherche à atteindre
+    if(map[coordonnées[0][0]-X_BASE_PLATEAU+1][coordonnées[1][0]]!=MUR){//si il n'y a pas d'obstacle à droite
+        input=DROITE;//initialise la direction par défaut à DROITE
+    }
+    else{//sinon
+        input=GAUCHE;//initialise la direction par défaut à GAUCHE
+    }
+    if(*chemin==ID_CHEMIN_BASE){//si le chemin direct est donné
+            x=lesPommesX[nbPommes];//affecte les coordonnées de la destination à celles de la pomme
+            y=lesPommesY[nbPommes];
+    }
+    else if(*chemin==ID_TP_HAUT){//si le chemin du téléporteur du haut est donné
+            x=tpHaut[0];//affecte les coordonnées de la destination à celles du téléporteur du haut
+            y=tpHaut[1];
+            if(coordonnées[0][0]==tpBas[0] && coordonnées[1][0]+1==tpBas[1]){//si les coordonnées du serpent sont celles de sa destination 
+                x=lesPommesX[nbPommes];//affecte les coordonnées de la destination à celles de la pomme
+                y=lesPommesY[nbPommes];
+                *chemin=0;//affecte la variable liée au chemin à celle du chemin direct
+            }
+    }
+    else if(*chemin==ID_TP_BAS){//si le chemin du téléporteur du bas est donné
+            x=tpBas[0];//affecte les coordonnées de la destination à celles du téléporteur du bas
+            y=tpBas[1];
+            if(coordonnées[0][0]==tpHaut[0] && coordonnées[1][0]-1==tpHaut[1]){//si les coordonnées du serpent sont celles de sa destination 
+                x=lesPommesX[nbPommes];//affecte les coordonnées de la destination à celles de la pomme
+                y=lesPommesY[nbPommes];
+                *chemin=0;//affecte la variable liée au chemin à celle du chemin direct
+            }
+    }
+    else if(*chemin==ID_TP_DROITE){//si le chemin du téléporteur de droite est donné
+            x=tpDroite[0];//affecte les coordonnées de la destination à celles du téléporteur de droite
+            y=tpDroite[1];
+            if(coordonnées[0][0]-1==tpGauche[0] && coordonnées[1][0]==tpGauche[1]){//si les coordonnées du serpent sont celles de sa destination 
+                x=lesPommesX[nbPommes];//affecte les coordonnées de la destination à celles de la pomme
+                y=lesPommesY[nbPommes];
+                *chemin=0;//affecte la variable liée au chemin à celle du chemin direct
+            }
+    }
+    else if(*chemin==ID_TP_GAUCHE){//si le chemin du téléporteur de gauche est donné
+            x=tpGauche[0];//affecte les coordonnées de la destination à celles du téléporteur de gauche
+            y=tpGauche[1];
+            if(coordonnées[0][0]+1==tpDroite[0] && coordonnées[1][0]==tpDroite[1]){//si les coordonnées du serpent sont celles de sa destination
+                x=lesPommesX[nbPommes];//affecte les coordonnées de la destination à celles de la pomme
+                y=lesPommesY[nbPommes];
+                *chemin=0;//affecte la variable liée au chemin à celle du chemin direct
+            }
+    }
+    if(coordonnées[1][0]!=y){//si la hauteur de la destination est différente de celle de la tête
+        if(coordonnées[1][0]<y && !estDansSerpent(coordonnées[0][0],coordonnées[1][0]+1,1) && map[coordonnées[0][0]-X_BASE_PLATEAU][coordonnées[1][0]-Y_BASE_PLATEAU+1]!=MUR){
+            input=BAS;//si la destination est plus basse que le serpent, affecte la variable de direction à Bas
+        }
+        else if(coordonnées[1][0]>y && !estDansSerpent(coordonnées[0][0],coordonnées[1][0]-1,1)&& map[coordonnées[0][0]-X_BASE_PLATEAU][coordonnées[1][0]-Y_BASE_PLATEAU-1]!=MUR){
+            input=HAUT;//si la destination est plus haute que le serpent, affecte la variable de direction à Haut
+        }
+        else{
+            if(coordonnées[0][0]<=x && !estDansSerpent(coordonnées[0][0]+1,coordonnées[1][0],1) && map[coordonnées[0][0]-X_BASE_PLATEAU+1][coordonnées[1][0]-Y_BASE_PLATEAU]!=MUR){
+                input=DROITE;//si allez en haut ou en bas est impossible affecte la variable de direction à Droite
+            }
+            else if(coordonnées[0][0]>=x && !estDansSerpent(coordonnées[0][0]-1,coordonnées[1][0],1) && map[coordonnées[0][0]-X_BASE_PLATEAU-1][coordonnées[1][0]-Y_BASE_PLATEAU]!=MUR){
+                input=GAUCHE;//si allez en haut ou en bas est impossible affecte la variable de direction à Gauche
+            }
+        }
+    }
+    if(coordonnées[0][0]!=x){// si l'abscisse de la destination est différente de celle de la tête
+        if(coordonnées[0][0]<x && !estDansSerpent(coordonnées[0][0]+1,coordonnées[1][0],1)&& map[coordonnées[0][0]-X_BASE_PLATEAU+1][coordonnées[1][0]-Y_BASE_PLATEAU]!=MUR){
+            input=DROITE;//si la destination est à droite du serpent, affecte la variable de direction à Droite
+        }
+        else if(coordonnées[0][0]>x && !estDansSerpent(coordonnées[0][0]-1,coordonnées[1][0],1)&& map[coordonnées[0][0]-X_BASE_PLATEAU-1][coordonnées[1][0]-Y_BASE_PLATEAU]!=MUR){
+            input=GAUCHE;//si la destination est à droite du serpent, affecte la variable de direction à Gauche
+            }
+        else{
+            if(coordonnées[1][0]<=y && !estDansSerpent(coordonnées[0][0],coordonnées[1][0]+1,1) && map[coordonnées[0][0]-X_BASE_PLATEAU][coordonnées[1][0]-Y_BASE_PLATEAU+1]!=MUR){
+                input=BAS;//si allez à gauche ou à droite est impossible affecte la variable de direction à Bas
+            }
+            else if(coordonnées[1][0]>=y && !estDansSerpent(coordonnées[0][0],coordonnées[1][0]-1,1) && map[coordonnées[0][0]-X_BASE_PLATEAU][coordonnées[1][0]-Y_BASE_PLATEAU-1]!=MUR){
+                input=HAUT;//si allez à gauche ou à droite est impossible affecte la variable de direction à Haut
+            }
+        }
+    }
+    return input;//retourne la direction que prendra le serpent
+    
+    
+}
+
+void ajouterPomme(){
+    map[lesPommesX[nbPommes]-X_BASE_PLATEAU][lesPommesY[nbPommes]-Y_BASE_PLATEAU]=POMME;//rentre les coordonnées de la pomme dans le tableau du plateau
+    afficher(lesPommesX[nbPommes],lesPommesY[nbPommes],POMME);//affiche la pomme
+}
+
+void gotoXY(int x, int y) { //Place le curseur aux coordonnées données en entrée
+    printf("\033[%d;%df", y, x); 
+}
+
+void afficher(int x, int y, char c) { //Affiche un caractère aux coordonnées données en entrée
+    gotoXY(x, y); //coordonnées minimales et maximales possibles
+    printf("%c", c); 
+}
+
+void effacer(int x, int y){ //Remplace le caractère aux coordonnées données en entrée par un espace
+    afficher(x, y, FOND);
+}
+
+void dessinerSerpent(){ //Affiche le serpent aux coordonnées présentent dans le tableau donné en entrée
+    int i;
+    for (i=TAILLE_BASE-1; i>=0; i--){
+        if(i==0){
+            if (coordonnées[0][0]>0 && coordonnées[1][0]>0){
+                afficher(coordonnées[0][i], coordonnées[1][i], TETE); //Affiche un '0' aux coordonnées de la tête
+            }
+        }
+        else{
+            if (coordonnées[0][i]>0 && coordonnées[1][i]>0){//Si les coordonnées sont dans les limites de l'écran
+                afficher(coordonnées[0][i], coordonnées[1][i], CORPS); //Affiche un 'X' aux coordonnées du corps
+            }
+        }
+    }
+}
+
+void progresser( char direction, bool* collision, bool* pomme){ //Affiche le serpent à une position plus avancée par rapport aux coordonnées de départ et à la direction donnée
+    int i; //récupère les coordonnées du dernier Anneau du serpent
+    effacer(coordonnées[0][TAILLE_BASE-1], coordonnées[1][TAILLE_BASE-1]); //Efface le dernier caractère du serpent si il n'a pas grandi durant cet appel
+    for (i=TAILLE_BASE-1;i>0;i--){                   //Attribue aux anneaux du corps les coordonnées de l'anneau précédent
+        coordonnées[0][i]=coordonnées[0][i-1];  //afin qu'ils suivent le mouvement de la tête du serpent
+        coordonnées[1][i]=coordonnées[1][i-1];
+    }
+    switch(direction){            //Modifie les coordonnées de la tête en fonction de la direction donnée en entrée
+        case DROITE:
+            if(coordonnées[0][0]+1==tpDroite[0]){//téléporte le serpent de l'autre côté du terminal si il passe par le trou dans la limite du plateau
+                coordonnées[0][0]=tpGauche[0];
+            }
+            coordonnées[0][0]+=1;
+            break;
+        case GAUCHE:
+            if(coordonnées[0][0]-1==tpGauche[0]){//téléporte le serpent de l'autre côté du terminal si il passe par le trou dans la limite du plateau
+                coordonnées[0][0]=tpDroite[0];
+            }
+            coordonnées[0][0]-=1;
+            break;
+        case HAUT:
+            if(coordonnées[1][0]-1==tpHaut[1]){//téléporte le serpent de l'autre côté du terminal si il passe par le trou dans la limite du plateau
+                coordonnées[1][0]=tpBas[1];
+            }
+            coordonnées[1][0]-=1;
+            break;
+        case BAS:
+            if(coordonnées[1][0]+1==tpBas[1]){//téléporte le serpent de l'autre côté du terminal si il passe par le trou dans la limite du plateau
+                coordonnées[1][0]=tpHaut[1];
+            }
+            coordonnées[1][0]+=1;
+            break;
+        default:
+            break;
+    }
+    if (map[coordonnées[0][0]-1][coordonnées[1][0]-1]==POMME){//vérifie qu'une pomme est mangée et augmente la taille du serpent si c'est le cas
+        *pomme=true;
+    }
+    if ((map[coordonnées[0][0]-X_BASE_PLATEAU][coordonnées[1][0]-Y_BASE_PLATEAU]==MUR)){
+        *collision=true;//vérifie que le serpent touche un obstacle ou son propre corps
+            
+    }
+    else{
+        dessinerSerpent(coordonnées); //Affiche le serpent aux nouvelles coordonnées si aucune collision n'a été détectée
+    }
+}
+
+bool estDansSerpent( int x, int y, int depart){//fonction qui renvoie true si les coordonnées données en entrées correspondent à celles
+    for (int i=depart;i<TAILLE_BASE;i++){                        //d'un anneau du serpent à partir de départ et false sinon
+        if (x==coordonnées[0][i] && y==coordonnées[1][i]){
+            return true;
+        }
+    }
+    return false;
+}
+
+void disableEcho() { //Désactive l'affichage des touches entrées
+    struct termios tty;
+
+    // Obtenir les attributs du terminal
+    if (tcgetattr(STDIN_FILENO, &tty) == -1) {
+        perror("tcgetattr");
+        exit(EXIT_FAILURE);
+    }
+
+    // Desactiver le flag ECHO
+    tty.c_lflag &= ~ECHO;
+
+    // Appliquer les nouvelles configurations
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &tty) == -1) {
+        perror("tcsetattr");
+        exit(EXIT_FAILURE);
+    }
+}
+
+
+
+void enableEcho() { //Active l'affichage des touches entrées
+    struct termios tty;
+
+    // Obtenir les attributs du terminal
+    if (tcgetattr(STDIN_FILENO, &tty) == -1) {
+        perror("tcgetattr");
+        exit(EXIT_FAILURE);
+    }
+
+    // Reactiver le flag ECHO
+    tty.c_lflag |= ECHO;
+
+    // Appliquer les nouvelles configurations
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &tty) == -1) {
+        perror("tcsetattr");
+        exit(EXIT_FAILURE);
+    }
+}
+
+int kbhit(){
+	// la fonction retourne :
+	// 1 si un caractere est present
+	// 0 si pas de caractere present
+	
+	int unCaractere=0;
+	struct termios oldt, newt;
+	int ch;
+	int oldf;
+
+	// mettre le terminal en mode non bloquant
+	tcgetattr(STDIN_FILENO, &oldt);
+	newt = oldt;
+	newt.c_lflag &= ~(ICANON | ECHO);
+	tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+	oldf = fcntl(STDIN_FILENO, F_GETFL, 0);
+	fcntl(STDIN_FILENO, F_SETFL, oldf | O_NONBLOCK);
+ 
+	ch = getchar();
+
+	// restaurer le mode du terminal
+	tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+	fcntl(STDIN_FILENO, F_SETFL, oldf);
+ 
+	if(ch != EOF){
+		ungetc(ch, stdin);
+		unCaractere=1;
+	} 
+	return unCaractere;
+}
